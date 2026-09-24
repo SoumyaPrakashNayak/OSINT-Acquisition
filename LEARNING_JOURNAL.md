@@ -83,6 +83,16 @@ This journal documents key architectural decisions, design patterns, technical c
   - Deterministic Primary Container Detection: Priority matching scans `<article>` first, followed by `<main>`, followed by known class containers (`article-body`, `post-content`, etc.), gracefully falling back to cleaned `<body>` if semantic wrappers are omitted.
   - Quality Metric Stratification: Implemented volume-based metrics (`word_count`, `character_count`, `heading_count`, `link_count`) and classified documents into deterministic tiers (`EMPTY`, `LOW`, `MEDIUM`, `HIGH`) to allow downstream pipelines to filter out thin or uninformative pages.
 
+### Phase 5: Entity Extraction / Named Entity Recognition (NER)
+* **Objective:** Purely passive, deterministic identification and extraction of identifiable entities mentioned within `ExtractedDocument` text without resolving identities or drawing investigative conclusions.
+* **Key Decisions:**
+  - Strict Architectural Boundary (Extraction ≠ Resolution): Phase 5 only answers: *"Which identifiable entities are explicitly mentioned in this content?"* It strictly forbids declaring whether an extracted person is the investigation target, suspect, or associate. Identity matching, risk scoring, and knowledge graph construction are segregated into subsequent phases.
+  - Zero ML / Zero Network Offline Strategy: Avoided heavy non-standard ML runtimes that require automatic downloads or lack wheels on Python 3.14. Built a production-grade `DeterministicEntityExtractor` combining high-precision regex engines, extensive Indian and global gazetteers, honorific/contextual grammar rules, and structural corporate/institutional pattern matchers. Operates 100% offline with zero network latency and sub-second test execution.
+  - Substring Offset Guarantee: Enforced `document.text[start_offset:end_offset] == entity.text` across all extracted mentions, ensuring downstream evidence highlighting and forensic cross-referencing remain perfectly aligned.
+  - Conservative Normalization: Strips whitespace, standardizes casing on emails, cleans phone number punctuation while preserving international dialing prefixes (`+91`), and standardizes unambiguous ISO dates without fabricating missing years.
+  - Mention Tracking vs. Deduplication: The pipeline tracks every individual entity occurrence as an `ExtractedEntity` mention, while simultaneously computing deterministic `UniqueEntity` aggregates with their specific `EntityOccurrence` spans.
+  - Provenance Anchoring: Every entity mention inherits the cryptographic SHA-256 `source_document_hash` and `source_url` from Phase 4, maintaining an unbroken chain of custody.
+
 ---
 
 ## 3. Engineering Insights & Technical Gotchas
@@ -127,6 +137,18 @@ This journal documents key architectural decisions, design patterns, technical c
 * **Issue:** News sites format bylines inconsistently: some write `"By John Doe"`, others `"Author: John Doe"`, and modern single-page applications embed authors inside JSON-LD structured schemas (`@type: NewsArticle -> author.name`).
 * **Solution:** Implemented regex prefix trimming (`r"^(?:by|author\s*:?)\s+"`) and added a JSON-LD parser fallback that inspects Schema.org tags for author declarations when HTML meta tags are absent.
 
+### ⚠️ Gotcha 10: Sentence Boundary Splitting vs. Punctuation in Abbreviations
+* **Issue:** Naive sentence splitting on `.` breaks titles (`Dr. Ramesh Kumar`, `Mr. John Doe`), currency abbreviations (`Rs. 50,000`), police ranks (`DGP`, `SP`), and decimals (`10.5 percent`) into false, fragmented sentence spans.
+* **Solution:** Implemented `split_sentences_with_spans` with lookback validation against a whitelist of legal, medical, and law-enforcement abbreviations, single-letter initials, and decimal digit lookaheads, preserving clean sentence context without artificial boundaries.
+
+### ⚠️ Gotcha 11: Overlapping Entity Spans & Subsumption Precedence
+* **Issue:** A string like `"Odisha Police arrested Ramesh Kumar in Bhubaneswar"` matches both `"Odisha Police"` (ORGANIZATION) and `"Odisha"` (LOCATION) on the same starting offset. Without conflict resolution, overlapping and conflicting entity tokens pollute downstream results.
+* **Solution:** Implemented deterministic priority-based span overlap resolution: candidates are sorted by category specificity priority descending, span length descending, and start offset ascending. Once a span is selected, any overlapping sub-spans are deterministically discarded.
+
+### ⚠️ Gotcha 12: Coreference and Alias Isolation
+* **Issue:** In an article stating `"Sundar Pichai visited India. Later, Pichai met officials. He spoke to reporters."`, it is tempting to resolve `"Pichai"` and `"He"` to `"Sundar Pichai"`.
+* **Solution:** Strictly forbade coreference resolution in Phase 5. Coreference resolution introduces statistical uncertainty and false linkages. Mentions are preserved exactly as stated in the source text; disambiguation and alias clustering are deferred to Phase 6.
+
 ---
 
 ## 4. Design Patterns Applied
@@ -142,6 +164,8 @@ This journal documents key architectural decisions, design patterns, technical c
 | **Incremental Streaming Reader** | [app/acquisition/fetcher.py](file:///e:/SIH2026/OSINT/app/acquisition/fetcher.py) | Enforces memory quotas during byte consumption, preventing decompression or size bomb denial-of-service. |
 | **Passive DOM Sanitization** | [app/extraction/parser.py](file:///e:/SIH2026/OSINT/app/extraction/parser.py) | Strips non-content and boilerplate elements before extracting text, ensuring zero script execution or external asset loading. |
 | **Priority Fallback Chain** | [app/extraction/metadata.py](file:///e:/SIH2026/OSINT/app/extraction/metadata.py), [app/extraction/parser.py](file:///e:/SIH2026/OSINT/app/extraction/parser.py) | Hierarchical resolution of titles, descriptions, and content containers from highest semantic specificity to general fallbacks. |
+| **Occurrence Aggregator & Deduplicator** | [app/entity_extraction/service.py](file:///e:/SIH2026/OSINT/app/entity_extraction/service.py) | Grouping individual mention spans into unique canonical entities while preserving occurrence spans and offsets. |
+| **Deterministic Provenance Anchoring** | [app/entity_extraction/extractor.py](file:///e:/SIH2026/OSINT/app/entity_extraction/extractor.py), [app/entity_extraction/service.py](file:///e:/SIH2026/OSINT/app/entity_extraction/service.py) | Preserves `source_document_hash` and `source_url` on all extracted entities for evidentiary traceability. |
 
 ---
 
@@ -149,10 +173,10 @@ This journal documents key architectural decisions, design patterns, technical c
 
 When evolving this component toward upstream integration into S.I.R.I.S., the following phases will build upon this foundation:
 
-1. **Phase 5 — Entity Extraction (NER)**:
-   - Purpose: Identify persons, organizations, locations, vehicle numbers, and statutory sections mentioned within extracted text.
-2. **Phase 6 — Person Resolution**:
-   - Purpose: Compare extracted candidate attributes against the investigation target using Jaro-Winkler, Levenshtein, and phonetic matching.
+1. **Phase 5 — Entity Extraction (NER)**: `[COMPLETED]`
+   - Purpose: Extract identifiable entities (persons, organizations, locations, dates, times, money, phones, emails, URLs) with character offsets and provenance.
+2. **Phase 6 — Entity Resolution / Target Matching**: `[NEXT RECOMMENDED PHASE]`
+   - Purpose: Compare extracted candidate attributes against the investigation target using Jaro-Winkler, Levenshtein, and phonetic matching (Soundex, Double Metaphone) to compute identity confidence.
 3. **Phase 7 — Relationship Extraction**:
    - Purpose: Link extracted entities to build subgraphs (e.g., `(Target)-[ASSOCIATED_WITH]->(Company)`).
 4. **Phase 8 — Telegram Public OSINT**:

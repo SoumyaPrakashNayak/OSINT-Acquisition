@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     high_content_words: int = 200
     max_extracted_links: int = 100
 
+    # Entity Extraction settings (Phase 5)
+    # Options: "deterministic" (default, offline rule-based), "mock"
+    ner_provider: str = "deterministic"
+    ner_model: str | None = None
+
     # Logging
     log_level: str = "INFO"
 

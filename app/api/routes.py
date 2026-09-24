@@ -142,3 +142,36 @@ async def extract_content(
 ) -> ExtractionResult:
     """Extract structured text, metadata, and quality metrics from an acquired WebDocument (Phase 4)."""
     return extraction_service.extract(payload.web_document)
+
+
+# --- Phase 5: Named Entity Recognition (NER) Dependencies & Routes ---
+
+from app.entity_extraction.extractor import DeterministicEntityExtractor, EntityExtractor
+from app.entity_extraction.mock_extractor import MockEntityExtractor
+from app.entity_extraction.models import EntityExtractionRequest, EntityExtractionResult
+from app.entity_extraction.service import EntityExtractionService
+
+
+def get_entity_extractor() -> EntityExtractor:
+    """Dependency provider returning active EntityExtractor based on settings."""
+    provider = (getattr(settings, "ner_provider", "deterministic") or "deterministic").lower()
+    if provider == "mock":
+        return MockEntityExtractor()
+    return DeterministicEntityExtractor()
+
+
+def get_entity_extraction_service(
+    extractor: EntityExtractor = Depends(get_entity_extractor),
+) -> EntityExtractionService:
+    """Dependency provider returning EntityExtractionService."""
+    return EntityExtractionService(extractor=extractor)
+
+
+@router.post("/osint/entities", response_model=EntityExtractionResult, tags=["OSINT Entity Extraction"])
+async def extract_entities(
+    payload: EntityExtractionRequest,
+    service: EntityExtractionService = Depends(get_entity_extraction_service),
+) -> EntityExtractionResult:
+    """Extract identifiable entities and track occurrences from an ExtractedDocument (Phase 5)."""
+    return service.extract(payload.document)
+

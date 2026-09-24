@@ -21,12 +21,17 @@ This repository implements strictly:
 * **Phase 2 — Web / News Discovery**: Provider abstraction layer (`SearchProvider`), deterministic `MockSearchProvider`, real `HttpSearchProvider` (SearXNG / SerpAPI / Tavily), URL validation, domain extraction, tracking-parameter sanitization, deduplication, and fault-tolerant query execution.
 * **Phase 3 — Web Content Acquisition**: Safe, asynchronous HTTP web resource retrieval, `WebFetcher` abstraction, `MockWebFetcher`, `HttpWebFetcher`, SSRF & private IP range blocking, streaming response-size limits, redirect control, SHA-256 cryptographic hashing, normalized `WebDocument`, structured acquisition error contracts, controlled concurrency batching, and API endpoints (`POST /osint/fetch`, `POST /osint/fetch-batch`).
 * **Phase 4 — Web Content Extraction**: Deterministic, passive HTML extraction from authoritative `WebDocument`, non-content & boilerplate elimination (`script`, `style`, `noscript`, `svg`, `nav`, `footer`, `aside`, ads, cookie banners), multi-level fallback metadata extraction (title, description, canonical URL, author/byline normalization, ISO-8601 publication/modified dates, language), primary content container detection (`article` -> `main` -> class container -> `body`), ordered headings (`h1`–`h6`), hyperlink extraction with base resolution, and volume-based content quality classification (`EMPTY`, `LOW`, `MEDIUM`, `HIGH`). Strict offline execution with zero network requests and full provenance preservation.
+* **Phase 5 — Entity Extraction (NER)**: Identifiable entity extraction from `ExtractedDocument` text with controlled taxonomy (`PERSON`, `ORGANIZATION`, `LOCATION`, `DATE`, `TIME`, `MONEY`, `PHONE`, `EMAIL`, `URL`), verified character offsets `[start_offset, end_offset)`, containing sentence context preservation, conservative deterministic normalization, occurrence tracking, deduplication into unique entities, and provenance tracking via SHA-256 content hashes. Operates strictly offline with zero external network calls or LLM runtime downloads.
+
+> **CRITICAL ARCHITECTURAL BOUNDARY**: Phase 5 identifies entities mentioned in extracted content but does not determine whether those entities correspond to the target person. Identity matching, criminal inference, and relationship graphs belong strictly to downstream phases.
 
 ### Explicitly Excluded (Future Phases)
-* ❌ Named Entity Recognition (NER) / LLM reasoning
-* ❌ Person resolution & fuzzy matching (Jaro-Winkler / Levenshtein)
-* ❌ Social media APIs (Telegram, Facebook, Instagram)
+* ❌ Target identity resolution & entity disambiguation (Phase 6)
+* ❌ Fuzzy person matching (Jaro-Winkler / Levenshtein)
+* ❌ Relationship extraction & graph analysis (Phase 7)
 * ❌ Neo4j graph databases / PostgreSQL / Vector stores
+* ❌ LLM reasoning / Gemini / OpenAI / Cloud NER APIs
+* ❌ Social media APIs (Telegram, Facebook, Instagram)
 
 ---
 
@@ -471,6 +476,317 @@ Content-Type: application/json
 
 ---
 
+### 7.6 Named Entity Recognition / Entity Extraction (Phase 5)
+
+```http
+POST /osint/entities
+Content-Type: application/json
+```
+
+#### Request Body:
+```json
+{
+  "document": {
+    "requested_url": "https://news.example.com/article-42",
+    "final_url": "https://news.example.com/article-42",
+    "domain": "news.example.com",
+    "content_hash": "b2f6c91a7894...",
+    "retrieved_at": "2026-09-22T08:05:00Z",
+    "title": "Police Probe High-Value Tender Fraud",
+    "description": null,
+    "canonical_url": null,
+    "author": "Sarah Connor",
+    "publication_date": "2026-09-22",
+    "modified_date": null,
+    "language": "en",
+    "headings": [],
+    "paragraphs": [
+      "Sundar Pichai visited India on Monday. Later, he joined Google officials in Bhubaneswar.",
+      "The conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210."
+    ],
+    "text": "Sundar Pichai visited India on Monday. Later, he joined Google officials in Bhubaneswar.\n\nThe conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210.",
+    "links": [],
+    "content_length": 182,
+    "word_count": 27,
+    "character_count": 182,
+    "paragraph_count": 2,
+    "heading_count": 0,
+    "link_count": 0,
+    "extraction_method": "deterministic_html_article",
+    "content_quality": "MEDIUM",
+    "warnings": []
+  }
+}
+```
+
+#### Successful Extraction Response (`200 OK`):
+```json
+{
+  "success": true,
+  "document_hash": "b2f6c91a7894...",
+  "source_url": "https://news.example.com/article-42",
+  "entities": [
+    {
+      "id": "entity-1",
+      "type": "PERSON",
+      "text": "Sundar Pichai",
+      "normalized_text": "Sundar Pichai",
+      "start_offset": 0,
+      "end_offset": 13,
+      "sentence": "Sundar Pichai visited India on Monday.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    },
+    {
+      "id": "entity-2",
+      "type": "LOCATION",
+      "text": "India",
+      "normalized_text": "India",
+      "start_offset": 22,
+      "end_offset": 27,
+      "sentence": "Sundar Pichai visited India on Monday.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    },
+    {
+      "id": "entity-3",
+      "type": "DATE",
+      "text": "Monday",
+      "normalized_text": "Monday",
+      "start_offset": 31,
+      "end_offset": 37,
+      "sentence": "Sundar Pichai visited India on Monday.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    },
+    {
+      "id": "entity-4",
+      "type": "ORGANIZATION",
+      "text": "Google",
+      "normalized_text": "Google",
+      "start_offset": 56,
+      "end_offset": 62,
+      "sentence": "Later, he joined Google officials in Bhubaneswar.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    },
+    {
+      "id": "entity-5",
+      "type": "LOCATION",
+      "text": "Bhubaneswar",
+      "normalized_text": "Bhubaneswar",
+      "start_offset": 76,
+      "end_offset": 87,
+      "sentence": "Later, he joined Google officials in Bhubaneswar.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    },
+    {
+      "id": "entity-6",
+      "type": "MONEY",
+      "text": "₹10 lakh",
+      "normalized_text": "₹10 lakh",
+      "start_offset": 111,
+      "end_offset": 119,
+      "sentence": "The conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    },
+    {
+      "id": "entity-7",
+      "type": "EMAIL",
+      "text": "info@example.com",
+      "normalized_text": "info@example.com",
+      "start_offset": 150,
+      "end_offset": 166,
+      "sentence": "The conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    },
+    {
+      "id": "entity-8",
+      "type": "PHONE",
+      "text": "+91 9876543210",
+      "normalized_text": "+919876543210",
+      "start_offset": 170,
+      "end_offset": 184,
+      "sentence": "The conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210.",
+      "confidence": null,
+      "source_document_hash": "b2f6c91a7894...",
+      "source_url": "https://news.example.com/article-42"
+    }
+  ],
+  "unique_entities": [
+    {
+      "type": "PERSON",
+      "normalized_text": "Sundar Pichai",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "Sundar Pichai",
+          "start_offset": 0,
+          "end_offset": 13,
+          "sentence": "Sundar Pichai visited India on Monday.",
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "type": "LOCATION",
+      "normalized_text": "India",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "India",
+          "start_offset": 22,
+          "end_offset": 27,
+          "sentence": "Sundar Pichai visited India on Monday.",
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "type": "DATE",
+      "normalized_text": "Monday",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "Monday",
+          "start_offset": 31,
+          "end_offset": 37,
+          "sentence": "Sundar Pichai visited India on Monday.",
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "type": "ORGANIZATION",
+      "normalized_text": "Google",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "Google",
+          "start_offset": 56,
+          "end_offset": 62,
+          "sentence": "Later, he joined Google officials in Bhubaneswar.",
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "type": "LOCATION",
+      "normalized_text": "Bhubaneswar",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "Bhubaneswar",
+          "start_offset": 76,
+          "end_offset": 87,
+          "sentence": "Later, he joined Google officials in Bhubaneswar.",
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "type": "MONEY",
+      "normalized_text": "₹10 lakh",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "₹10 lakh",
+          "start_offset": 111,
+          "end_offset": 119,
+          "sentence": "The conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210.",
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "type": "EMAIL",
+      "normalized_text": "info@example.com",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "info@example.com",
+          "start_offset": 150,
+          "end_offset": 166,
+          "sentence": "The conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210.",
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "type": "PHONE",
+      "normalized_text": "+919876543210",
+      "count": 1,
+      "occurrences": [
+        {
+          "text": "+91 9876543210",
+          "start_offset": 170,
+          "end_offset": 184,
+          "sentence": "The conference cost ₹10 lakh and registered attendees via info@example.com or +91 9876543210.",
+          "confidence": null
+        }
+      ]
+    }
+  ],
+  "entity_count": 8,
+  "mention_count": 8,
+  "unique_entity_count": 8,
+  "counts_by_type": {
+    "PERSON": 1,
+    "LOCATION": 2,
+    "DATE": 1,
+    "ORGANIZATION": 1,
+    "MONEY": 1,
+    "EMAIL": 1,
+    "PHONE": 1
+  },
+  "warnings": [],
+  "error": null,
+  "metrics": {
+    "character_count": 182,
+    "word_count": 27,
+    "mention_count": 8,
+    "unique_entity_count": 8,
+    "duration_ms": 1.2
+  }
+}
+```
+
+#### Controlled Extraction Failure (`200 OK`):
+*When processing empty or whitespace-only documents:*
+```json
+{
+  "success": false,
+  "document_hash": "b2f6c91a...",
+  "source_url": "https://example.com/blank",
+  "entities": [],
+  "unique_entities": [],
+  "entity_count": 0,
+  "mention_count": 0,
+  "unique_entity_count": 0,
+  "counts_by_type": {},
+  "warnings": [
+    "The document contains no text for entity extraction."
+  ],
+  "error": {
+    "code": "EMPTY_DOCUMENT",
+    "message": "The provided document contains no extractable text.",
+    "retryable": false
+  }
+}
+```
+
+---
+
 ## 8. Security & Operational Controls
 
 * **SSRF Prevention**: Strict URL scheme checks (only `http`/`https`). Blocks requests to `localhost`, `127.0.0.0/8`, `0.0.0.0/8`, RFC 1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local metadata (`169.254.0.0/16`), and equivalent IPv6 addresses.
@@ -480,14 +796,17 @@ Content-Type: application/json
 * **Controlled Concurrency**: Batch fetches use an `asyncio.Semaphore` bound by `MAX_CONCURRENT_FETCHES` (default 5).
 * **Passive DOM Parsing (Phase 4)**: HTML extraction operates strictly offline with zero socket connections or outbound HTTP I/O (`BeautifulSoup` using standard `html.parser`). Script execution is completely disabled, mitigating stored XSS or remote payload triggers during extraction.
 * **Raw Document Immutability**: Source `WebDocument.html` and cryptographic `content_hash` remain immutable across all extraction steps, ensuring full forensic chain-of-custody.
+* **Passive Offline Entity Extraction (Phase 5)**: Entity extraction executes 100% offline with zero outbound HTTP requests, zero external API queries (no OpenAI, Gemini, or external NER services), and zero automatic runtime model downloads.
+* **Untrusted Document Text**: Document text is treated strictly as passive, untrusted string data. Embedded scripts, SQL syntax, or injection payloads are never executed, evaluated, or passed to system shells.
+* **Strict Non-Resolution**: Phase 5 maintains a hard architectural boundary: it extracts entity mentions and character spans but does not perform person resolution, target matching, criminal scoring, or graph generation.
 
 ---
 
 ## 9. Future Phases Roadmap
 
-* **Phase 5 — Entity Extraction (NER)**: Extract persons, organizations, locations, vehicle numbers, and statutory sections.
-* **Phase 6 — Person Resolution**: Disambiguation using phonetic algorithms and string metrics (Jaro-Winkler, Levenshtein).
+* **Phase 6 — Entity Resolution / Target Matching**: Target disambiguation, identity confidence scoring, phonetic matching (Soundex, Metaphone), and string distance metrics (Jaro-Winkler, Levenshtein).
 * **Phase 7 — Relationship Extraction**: Infer entity-to-entity linkages from co-occurrences and contextual analysis.
 * **Phase 8 — Telegram Public OSINT**: Extend discovery to publicly indexed Telegram channels and broadcast feeds.
 * **Phase 9 — Evidence & Provenance**: Cryptographic hashing (SHA-256) and chain-of-custody metadata stamping.
 * **Phase 10 — S.I.R.I.S. Integration**: Direct ingestion into Central Intelligence FastAPI and Neo4j Knowledge Graph.
+
