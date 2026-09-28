@@ -801,7 +801,6 @@ Content-Type: application/json
 * **Strict Non-Resolution**: Phase 5 maintains a hard architectural boundary: it extracts entity mentions and character spans but does not perform person resolution, target matching, criminal scoring, or graph generation.
 
 ---
-
 ## 9. Future Phases Roadmap
 
 * **Phase 6 — Entity Resolution / Target Matching**: Target disambiguation, identity confidence scoring, phonetic matching (Soundex, Metaphone), and string distance metrics (Jaro-Winkler, Levenshtein).
